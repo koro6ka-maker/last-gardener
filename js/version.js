@@ -1,1 +1,1 @@
-window.LG_VERSION = '2026-11-04.0925';
+window.LG_VERSION = '2026-11-04.1128';

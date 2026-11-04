@@ -46,9 +46,23 @@
       <p id="save-note" class="small"></p>
       <p id="version-note" class="small"></p>
       <button id="resume-btn" class="primary">Продолжить</button>
+      <div id="sync-box"></div>
       <button id="reset-btn" class="quiet">Начать сад заново</button>
     </div>
   </div>
+
+  <div id="conflict" class="overlay hidden">
+    <div class="sheet">
+      <h1>Какой сад оставить?</h1>
+      <p>Сад менялся и на этом устройстве, и на другом. Соединить их нельзя — выберите один. Второй будет заменён.</p>
+      <div class="choice" id="conflict-remote"></div>
+      <button id="conflict-take" class="primary">Взять сад с другого устройства</button>
+      <div class="choice" id="conflict-local"></div>
+      <button id="conflict-keep" class="primary">Оставить сад этого устройства</button>
+    </div>
+  </div>
+
+  <div id="sync-pill" class="hidden"></div>
 
   <div id="intro" class="overlay hidden">
     <div class="sheet">
@@ -64,6 +78,7 @@
   <script src="js/balance.js"></script>
   <script src="js/sim.js"></script>
   <script src="js/draw.js"></script>
+  <script src="js/sync.js"></script>
   <script src="js/game.js"></script>
 </body>
 </html>

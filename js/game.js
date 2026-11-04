@@ -33,7 +33,7 @@
 
   // ---------- Состояние интерфейса ----------
   var g = { x: state.gardenerX || 640, targetX: state.gardenerX || 640, facing: 1, phase: 0, action: null, actionT: 0, after: null, onArrive: null };
-  var ui = { target: null, mode: 'normal', from: null, inspected: false, paused: false, intro: !state.introSeen, confirmReset: false };
+  var ui = { target: null, mode: 'normal', from: null, inspected: false, paused: false, intro: !state.introSeen, confirmReset: false, syncing: false, conflict: null, syncForm: false, confirmUnlink: false };
   var parts = [];
   var view = { scale: 1, ox: 0, oy: 0, cw: 0, ch: 0, dpr: 1, pan: false, viewW: 0 };
   var cam = { x: 0, holdUntil: 0 };
@@ -190,7 +190,7 @@
   }
 
   function tap(sx, sy) {
-    if (ui.paused || ui.intro || g.action) return;
+    if (ui.paused || ui.intro || ui.syncing || ui.conflict || g.action) return;
     var wx = (sx - view.ox) / view.scale, wy = (sy - view.oy) / view.scale;
     var hit = hitTest(wx, wy);
     if (ui.mode === 'transplant') {
@@ -378,12 +378,16 @@
     ui.paused = p;
     ui.confirmReset = false;
     $('pause-overlay').classList.toggle('hidden', !p);
+    document.body.classList.toggle('paused', p);
     $('reset-btn').textContent = 'Начать сад заново';
     $('pause-btn').innerHTML = icon(p ? 'play' : 'pause');
     $('pause-btn').setAttribute('aria-label', p ? 'Продолжить' : 'Пауза');
     $('save-note').textContent = storageOk ? 'Сад сохранён на этом устройстве.' : 'Не получается сохранить: браузер запрещает хранение данных (например, в частном режиме).';
     $('version-note').textContent = 'Версия игры: ' + (window.LG_VERSION || '—');
     if (p) save();
+    ui.confirmUnlink = false;
+    renderSyncBox();
+    if (p) runSync('pause', true); else runSync('resume');
   }
   $('pause-btn').addEventListener('click', function () { if (!ui.intro) setPaused(!ui.paused); });
   $('resume-btn').addEventListener('click', function () { setPaused(false); });
@@ -409,12 +413,181 @@
     if (view.pan) toast('Проведите пальцем по экрану, чтобы осмотреть всю оранжерею.');
   });
 
+  // ---------- Сад на всех устройствах (синхронизация через GitHub игрока) ----------
+  var SYNC = window.LG_SYNC;
+  var sync = SYNC.create({
+    storage: { get: function (k) { return localStorage.getItem(k); }, set: function (k, v) { localStorage.setItem(k, v); } },
+    fetch: function (u, o) { return window.fetch(u, o); },
+    ua: navigator.userAgent
+  });
+  var syncWarned = {};
+
+  function gardenText() { save(); return SIM.serialize(state); }
+
+  // Забрать сад из облака и показать его на этом устройстве.
+  function applyRemote(remote) {
+    var s = SIM.deserialize(remote.game);
+    if (!s) { toast('Сад в облаке сохранён более новой версией игры. Откройте игру с интернетом, чтобы она обновилась.'); return false; }
+    state = s;
+    g.x = g.targetX = state.gardenerX || 640; g.action = null; g.onArrive = null; g.after = null;
+    ui.target = null; ui.mode = 'normal'; hideCard(); hideBanner();
+    parts.length = 0;
+    cam.x = Math.min(camLimits()[1], Math.max(camLimits()[0], g.x - view.viewW / 2));
+    if (state.introSeen && ui.intro) { ui.intro = false; $('intro').classList.add('hidden'); }
+    save();
+    sync.adopt(remote);
+    lastHud = ''; renderHud();
+    return true;
+  }
+
+  // reason: start | resume | pause | periodic | connect | check
+  function runSync(reason, keepalive) {
+    if (!sync.connected || params.has('fresh')) return Promise.resolve({ result: 'off' });
+    var text = gardenText();
+    var hold = reason === 'start' || reason === 'resume';
+    var timedOut = false, timer = null;
+    if (hold) {
+      ui.syncing = true; showPill('Сверяю сад с облаком…');
+      // Без связи долго не ждём: играем здесь, сад отправится позже.
+      timer = setTimeout(function () { timedOut = true; ui.syncing = false; hidePill(); }, 6000);
+    }
+    renderSyncBox();
+    return sync.sync(text, state.time < 120, keepalive).then(function (r) {
+      if (timer) clearTimeout(timer);
+      if (hold && !timedOut) { ui.syncing = false; hidePill(); }
+      var unchanged = SIM.serialize(state) === text;
+      if (r.result === 'pull') {
+        if (unchanged && applyRemote(r.remote)) toast('Сад загружен с устройства «' + (r.remote.device || '?') + '».');
+      } else if (r.result === 'conflict') {
+        if (unchanged || !ui.conflict) showConflict(r.remote);
+      } else if (r.result === 'badkey' || r.result === 'forbidden') {
+        if (!syncWarned[r.result]) {
+          syncWarned[r.result] = true;
+          toast(r.result === 'badkey' ? 'Ключ GitHub больше не подходит. Сад сохраняется только здесь — подключите новый ключ в меню паузы.'
+                                      : 'GitHub не дал доступ к сохранению. Проверьте ключ в меню паузы.');
+        }
+      } else if (r.result === 'pushed' && reason === 'connect') {
+        toast('Готово: сад этого устройства теперь в облаке.');
+      }
+      if (reason === 'connect' && r.result === 'same') toast('Готово: синхронизация включена.');
+      renderSyncBox();
+      return r;
+    });
+  }
+
+  function showPill(text) { $('sync-pill').textContent = text; $('sync-pill').classList.remove('hidden'); }
+  function hidePill() { $('sync-pill').classList.add('hidden'); }
+
+  function fmtWhen(ms) {
+    if (!ms) return '—';
+    var d = new Date(ms), now = new Date();
+    var hm = d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+    if (d.toDateString() === now.toDateString()) return 'сегодня в ' + hm;
+    return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' }) + ' в ' + hm;
+  }
+  function fmtGardenTime(sec) {
+    var m = Math.floor(sec / 60), h = Math.floor(m / 60);
+    return h ? h + ' ч ' + (m % 60) + ' мин' : m + ' мин';
+  }
+  function gardenSummary(s) {
+    var alive = s.pots.filter(function (p) { return p.plant && !p.plant.dead; }).length;
+    var seeds = Object.keys(s.seeds).reduce(function (a, k) { return a + (s.seeds[k] || 0); }, 0);
+    var adults = s.pots.filter(function (p) { return p.plant && !p.plant.dead && p.plant.growth >= 1; }).length;
+    return 'Время в саду: ' + fmtGardenTime(s.time) + '<br>Растений: ' + alive + ' (взрослых: ' + adults + ')<br>Семян в архиве: ' + seeds;
+  }
+  function esc(t) { return String(t).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+  // ---------- Выбор, когда сад менялся в двух местах ----------
+  function showConflict(remote) {
+    var other = SIM.deserialize(remote.game);
+    if (!other) { toast('Сад в облаке сохранён более новой версией игры. Откройте игру с интернетом, чтобы она обновилась.'); return; }
+    save();
+    ui.conflict = remote;
+    $('conflict-remote').innerHTML = '<b>С устройства «' + esc(remote.device || '?') + '»</b><br><small>сохранён ' + fmtWhen(remote.savedAt) + '</small><p>' + gardenSummary(other) + '</p>';
+    $('conflict-local').innerHTML = '<b>На этом устройстве' + (sync.device ? ' («' + esc(sync.device) + '»)' : '') + '</b><br><small>сейчас</small><p>' + gardenSummary(state) + '</p>';
+    $('conflict').classList.remove('hidden');
+  }
+  function closeConflict() { ui.conflict = null; $('conflict').classList.add('hidden'); renderSyncBox(); }
+  $('conflict-take').addEventListener('click', function () {
+    var remote = ui.conflict; if (!remote) return;
+    if (applyRemote(remote)) toast('Сад загружен с устройства «' + (remote.device || '?') + '».');
+    closeConflict();
+  });
+  $('conflict-keep').addEventListener('click', function () {
+    var remote = ui.conflict; if (!remote) return;
+    var btn = $('conflict-keep'); btn.disabled = true; btn.textContent = 'Отправляю…';
+    sync.keepLocal(gardenText(), remote).then(function (r) {
+      btn.disabled = false; btn.textContent = 'Оставить сад этого устройства';
+      if (r.result === 'pushed') { toast('Сад этого устройства сохранён в облаке.'); closeConflict(); }
+      else toast('Не получилось связаться с облаком. Попробуйте ещё раз чуть позже.');
+    });
+  });
+
+  // ---------- Блок синхронизации в меню паузы ----------
+  function syncStatusText() {
+    var st = sync.status;
+    switch (st.kind) {
+      case 'ok': return 'Сад в облаке. Последняя сверка: ' + fmtWhen(st.at) + '.';
+      case 'busy': return 'Сверяю сад с облаком…';
+      case 'offline': return 'Нет связи с облаком. Играйте спокойно — сад отправится, когда появится интернет.' + (st.at ? ' Последняя сверка: ' + fmtWhen(st.at) + '.' : '');
+      case 'badkey': return 'Ключ GitHub не подходит или его срок истёк. Сад сохраняется только на этом устройстве.';
+      case 'forbidden': return 'GitHub не дал доступ. При создании ключа должна стоять галочка «gist».';
+      case 'error': return 'GitHub ответил с ошибкой. Попробуем ещё раз позже.' + (st.at ? ' Последняя сверка: ' + fmtWhen(st.at) + '.' : '');
+      default: return 'Ещё не сверялся с облаком.';
+    }
+  }
+  function renderSyncBox() {
+    var box = $('sync-box'); if (!box) return;
+    var html = '<h2>Сад на всех устройствах</h2>';
+    var needKey = sync.connected && (sync.status.kind === 'badkey' || sync.status.kind === 'forbidden');
+    if (ui.syncForm) {
+      var dev = sync.device || SYNC.guessDevice(navigator.userAgent);
+      html += '<ol class="steps">' +
+        '<li><a href="' + SYNC.tokenUrl(dev) + '" target="_blank" rel="noopener">Открыть страницу ключа на GitHub</a>. В поле <b>Expiration</b> выберите <b>No expiration</b>, галочку <b>gist</b> не снимайте. Внизу нажмите <b>Generate token</b> и скопируйте ключ (он начинается с <b>ghp_</b>).</li>' +
+        '<li>Вставьте ключ сюда:<input id="sync-token" type="text" inputmode="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="ghp_…"></li>' +
+        '<li>Название устройства:<input id="sync-device" type="text" autocomplete="off" value="' + esc(dev) + '"></li>' +
+        '</ol><p id="sync-error" class="small warn"></p>' +
+        '<button data-act="connect" class="primary">Подключить</button>' +
+        '<button data-act="cancel" class="quiet">Отмена</button>';
+    } else if (!sync.connected) {
+      html += '<p class="small">Можно играть в один и тот же сад на телефоне и компьютере. Для этого подключите свой GitHub — один раз на каждом устройстве.</p>' +
+        '<button data-act="open" class="soft">Подключить</button>';
+    } else {
+      html += '<p class="small">Это устройство: «' + esc(sync.device) + '». ' + syncStatusText() + '</p>';
+      if (needKey) html += '<button data-act="open" class="soft">Ввести новый ключ</button>';
+      else html += '<button data-act="check" class="soft"' + (sync.busy ? ' disabled' : '') + '>Сверить сейчас</button>';
+      html += '<button data-act="unlink" class="quiet">' + (ui.confirmUnlink ? 'Точно отключить? Нажмите ещё раз' : 'Отключить на этом устройстве') + '</button>';
+    }
+    // Не перерисовываем форму, пока игрок в ней печатает.
+    if (ui.syncForm && box.querySelector('#sync-token')) return;
+    box.innerHTML = html;
+  }
+  $('sync-box').addEventListener('click', function (e) {
+    var b = e.target.closest('button[data-act]'); if (!b) return;
+    var act = b.getAttribute('data-act');
+    if (act === 'open') { ui.syncForm = true; renderSyncBox(); }
+    else if (act === 'cancel') { ui.syncForm = false; $('sync-box').innerHTML = ''; renderSyncBox(); }
+    else if (act === 'check') { runSync('check'); }
+    else if (act === 'unlink') {
+      if (!ui.confirmUnlink) { ui.confirmUnlink = true; renderSyncBox(); return; }
+      ui.confirmUnlink = false; sync.disconnect(); renderSyncBox();
+      toast('Синхронизация отключена. Сад остаётся на этом устройстве.');
+    } else if (act === 'connect') {
+      var token = $('sync-token').value.replace(/\s+/g, '');
+      var device = $('sync-device').value;
+      if (token.length < 20) { $('sync-error').textContent = 'Похоже, ключ вставлен не целиком. Скопируйте его ещё раз.'; return; }
+      sync.connect(token, device);
+      ui.syncForm = false; $('sync-box').innerHTML = ''; syncWarned = {};
+      runSync('connect');
+    }
+  });
+
   // ---------- Главный цикл ----------
-  var last = performance.now(), saveTimer = 0, cardTimer = 0;
+  var last = performance.now(), saveTimer = 0, cardTimer = 0, syncTimer = 0;
   function frame(now) {
     var dt = Math.min(0.1, Math.max(0, (now - last) / 1000)); // большие паузы не догоняются
     last = now;
-    if (!ui.paused && !ui.intro) {
+    if (!ui.paused && !ui.intro && !ui.syncing && !ui.conflict) {
       tAnim += dt;
       var events = SIM.step(state, dt * SPEED);
       events.forEach(function (e) { toast(eventText(e)); });
@@ -422,6 +595,8 @@
       updateParticles(dt);
       saveTimer += dt;
       if (saveTimer > 5) { saveTimer = 0; save(); }
+      syncTimer += dt;
+      if (syncTimer > 60) { syncTimer = 0; runSync('periodic'); }
     } else if (ui.intro) {
       tAnim += dt * 0.5;
     }
@@ -439,9 +614,10 @@
   renderHud();
   $('pause-btn').innerHTML = icon('pause');
   requestAnimationFrame(frame);
+  runSync('start');
 
   // Для автоматических проверок
-  window.LG_DEBUG = { get state() { return state; }, ui: ui, gardener: g, view: view, tap: tap, save: save, setPaused: setPaused };
+  window.LG_DEBUG = { get state() { return state; }, ui: ui, gardener: g, view: view, tap: tap, save: save, setPaused: setPaused, get sync() { return sync; }, runSync: runSync };
 
   // Офлайн-режим: работает, когда игра открыта по адресу http(s), а не как файл.
   if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0 && !params.has('nosw')) {

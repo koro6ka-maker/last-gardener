@@ -1,7 +1,7 @@
 // Офлайн-кэш: после первого открытия игра работает без интернета.
 // При изменении файлов игры увеличивайте номер версии.
-var CACHE = 'last-gardener-2026-11-04.0925';
-var FILES = ['./', 'index.html', 'css/style.css', 'js/version.js', 'js/balance.js', 'js/sim.js', 'js/draw.js', 'js/game.js',
+var CACHE = 'last-gardener-2026-11-04.1128';
+var FILES = ['./', 'index.html', 'css/style.css', 'js/version.js', 'js/balance.js', 'js/sim.js', 'js/draw.js', 'js/sync.js', 'js/game.js',
   'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-512.png'];
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(FILES); }).then(function () { return self.skipWaiting(); }));
@@ -13,6 +13,8 @@ self.addEventListener('activate', function (e) {
 });
 self.addEventListener('fetch', function (e) {
   if (e.request.method !== 'GET') return;
+  // Обращения к GitHub (синхронизация сада) идут мимо кэша.
+  if (new URL(e.request.url).origin !== location.origin) return;
   e.respondWith(caches.match(e.request, { ignoreSearch: true }).then(function (hit) {
     return hit || fetch(e.request).then(function (res) {
       var copy = res.clone();
