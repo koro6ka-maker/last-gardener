@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Последний садовник</title>
+  <meta name="theme-color" content="#0d1322">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Садовник">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <canvas id="scene" aria-label="Оранжерея на космической станции"></canvas>
+
+  <div id="hud">
+    <button id="pause-btn" class="round" aria-label="Пауза"></button>
+    <div id="pouch" aria-label="Семена"></div>
+  </div>
+
+  <div id="banner" class="hidden">
+    <span id="banner-text"></span>
+    <button id="banner-cancel">Отмена</button>
+  </div>
+
+  <section id="card" class="hidden" aria-live="polite">
+    <button id="card-close" aria-label="Закрыть">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+    <h2 id="card-title"></h2>
+    <div id="card-stage"></div>
+    <div id="card-body"></div>
+    <div id="card-actions"></div>
+  </section>
+
+  <div id="toast" role="status"></div>
+
+  <div id="pause-overlay" class="overlay hidden">
+    <div class="sheet">
+      <h1>Пауза</h1>
+      <p>Сад спит. Пока игра на паузе или закрыта, время на станции не идёт — растения дождутся вас.</p>
+      <p id="save-note" class="small"></p>
+      <p id="version-note" class="small"></p>
+      <button id="resume-btn" class="primary">Продолжить</button>
+      <button id="reset-btn" class="quiet">Начать сад заново</button>
+    </div>
+  </div>
+
+  <div id="intro" class="overlay hidden">
+    <div class="sheet">
+      <h1>Последний садовник</h1>
+      <p>Станция медленно кружит над планетой, на которой больше никто не живёт.</p>
+      <p>Здесь, наверху, в маленькой оранжерее ещё растут три растения. Присматривайтесь к ним: по листьям и земле видно, чего им не хватает.</p>
+      <p class="small">Время в саду идёт только пока игра открыта. Можно уйти на неделю — сад подождёт.</p>
+      <button id="intro-btn" class="primary">Войти в оранжерею</button>
+    </div>
+  </div>
+
+  <script src="js/version.js"></script>
+  <script src="js/balance.js"></script>
+  <script src="js/sim.js"></script>
+  <script src="js/draw.js"></script>
+  <script src="js/game.js"></script>
+</body>
+</html>
